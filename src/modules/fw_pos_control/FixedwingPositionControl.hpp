@@ -240,6 +240,7 @@ private:
 		FW_POSCTRL_MODE_AUTO_TAKEOFF,
 		FW_POSCTRL_MODE_AUTO_LANDING_STRAIGHT,
 		FW_POSCTRL_MODE_AUTO_LANDING_CIRCULAR,
+		FW_POSCTRL_MODE_AUTO_PATH,
 		FW_POSCTRL_MODE_MANUAL_POSITION,
 		FW_POSCTRL_MODE_MANUAL_ALTITUDE,
 		FW_POSCTRL_MODE_OTHER
@@ -256,6 +257,7 @@ private:
 	double _current_longitude{0};
 	float _current_altitude{0.f};
 
+	float _roll{0.f};
 	float _pitch{0.0f};
 	float _yaw{0.0f};
 	float _yawrate{0.0f};
@@ -268,12 +270,6 @@ private:
 	float _reference_altitude{NAN}; // [m AMSL] altitude of the local projection reference point
 
 	bool _landed{true};
-
-	// indicates whether the plane was in the air in the previous interation
-	bool _was_in_air{false};
-
-	// [us] time at which the plane went in the air
-	hrt_abstime _time_went_in_air{0};
 
 	// MANUAL MODES
 
@@ -365,8 +361,8 @@ private:
 
 	// AIRSPEED
 
-	float _airspeed{0.0f};
-	float _eas2tas{1.0f};
+	float _airspeed_eas{0.f};
+	float _eas2tas{1.f};
 	bool _airspeed_valid{false};
 	float _air_density{atmosphere::kAirDensitySeaLevelStandardAtmos};
 
@@ -387,18 +383,10 @@ private:
 	// total energy control system - airspeed / altitude control
 	TECS _tecs;
 
-	bool _reinitialize_tecs{true};
 	bool _tecs_is_running{false};
-	hrt_abstime _time_last_tecs_update{0}; // [us]
-
 	// VTOL / TRANSITION
-
-	float _airspeed_after_transition{0.0f};
-	bool _was_in_transition{false};
 	bool _is_vtol_tailsitter{false};
 	matrix::Vector2d _transition_waypoint{(double)NAN, (double)NAN};
-	param_t _param_handle_airspeed_trans{PARAM_INVALID};
-	float _param_airspeed_trans{NAN}; // [m/s]
 
 	// ESTIMATOR RESET COUNTERS
 
@@ -415,6 +403,7 @@ private:
 
 	// nonlinear path following guidance - lateral-directional position control
 	NPFG _npfg;
+	bool _need_report_npfg_uncertain_condition{false}; ///< boolean if reporting of uncertain npfg output condition is needed
 
 	PerformanceModel _performance_model;
 
@@ -467,6 +456,13 @@ private:
 				 float throttle_trim);
 	void publishLocalPositionSetpoint(const position_setpoint_s &current_waypoint);
 	float getLoadFactor();
+
+	/**
+	 * @brief Get the NPFG roll setpoint with mitigation strategy if npfg is not certain about its output
+	 *
+	 * @return roll setpoint
+	 */
+	float getCorrectedNpfgRollSetpoint();
 
 	/**
 	 * @brief Sets the landing abort status and publishes landing status.
@@ -606,6 +602,18 @@ private:
 
 
 	/**
+	 * @brief Vehicle control for following a path.
+	 *
+	 * @param control_interval Time since last position control call [s]
+	 * @param curr_pos Current 2D local position vector of vehicle [m]
+	 * @param ground_speed Local 2D ground speed of vehicle [m/s]
+	 * @param pos_sp_prev previous position setpoint
+	 * @param pos_sp_curr current position setpoint
+	 */
+	void control_auto_path(const float control_interval, const Vector2d &curr_pos, const Vector2f &ground_speed,
+			       const position_setpoint_s &pos_sp_curr);
+
+	/**
 	 * @brief Controls a desired airspeed, bearing, and height rate.
 	 *
 	 * @param control_interval Time since last position control call [s]
@@ -712,6 +720,7 @@ private:
 	void publishOrbitStatus(const position_setpoint_s pos_sp);
 
 	SlewRate<float> _airspeed_slew_rate_controller;
+	SlewRate<float> _roll_slew_rate;
 
 	/**
 	 * @brief A wrapper function to call the TECS implementation
@@ -958,7 +967,7 @@ private:
 		(ParamFloat<px4::params::FW_GPSF_R>) _param_nav_gpsf_r,
 
 		// external parameters
-		(ParamInt<px4::params::FW_ARSP_MODE>) _param_fw_arsp_mode,
+		(ParamBool<px4::params::FW_USE_AIRSPD>) _param_fw_use_airspd,
 
 		(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off,
 

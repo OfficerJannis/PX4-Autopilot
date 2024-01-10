@@ -69,6 +69,7 @@ set(msg_files
 	DebugKeyValue.msg
 	DebugValue.msg
 	DebugVect.msg
+	DifferentialDriveSetpoint.msg
 	DifferentialPressure.msg
 	DistanceSensor.msg
 	Ekf2Timestamps.msg
@@ -234,6 +235,7 @@ set(msg_files
 	VehicleTorqueSetpoint.msg
 	VehicleTrajectoryBezier.msg
 	VehicleTrajectoryWaypoint.msg
+	VelocityLimits.msg
 	VtolVehicleStatus.msg
 	WheelEncoders.msg
 	Wind.msg

@@ -65,6 +65,7 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/topics/geofence_result.h>
+#include <uORB/topics/gimbal_manager_set_attitude.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/mission.h>
 #include <uORB/topics/mission_result.h>
@@ -238,14 +239,13 @@ public:
 	void set_cruising_throttle(float throttle = NAN) { _mission_throttle = throttle; }
 
 	/**
-	 * Get the yaw acceptance given the current mission item
+	 * Get if the yaw acceptance is required at the current mission item
 	 *
 	 * @param mission_item_yaw the yaw to use in case the controller-derived radius is finite
 	 *
-	 * @return the yaw at which the next waypoint should be used or NaN if the yaw at a waypoint
-	 * should be ignored
+	 * @return true if the yaw acceptance is required, false if not required
 	 */
-	float get_yaw_acceptance(float mission_item_yaw);
+	bool get_yaw_to_be_accepted(float mission_item_yaw);
 
 	orb_advert_t *get_mavlink_log_pub() { return &_mavlink_log_pub; }
 
@@ -276,8 +276,9 @@ public:
 
 	void acquire_gimbal_control();
 	void release_gimbal_control();
+	void set_gimbal_neutral();
 
-	void calculate_breaking_stop(double &lat, double &lon, float &yaw);
+	void calculate_breaking_stop(double &lat, double &lon);
 
 	void stop_capturing_images();
 	void disable_camera_trigger();

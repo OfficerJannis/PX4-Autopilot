@@ -62,6 +62,10 @@
 #include "aid_sources/ZeroGyroUpdate.hpp"
 #include "aid_sources/ZeroVelocityUpdate.hpp"
 
+#if defined(CONFIG_EKF2_AUX_GLOBAL_POSITION)
+# include "aux_global_position.hpp"
+#endif // CONFIG_EKF2_AUX_GLOBAL_POSITION
+
 enum class Likelihood { LOW, MEDIUM, HIGH };
 
 class Ekf final : public EstimatorInterface
@@ -255,7 +259,7 @@ public:
 	// get the ekf WGS-84 origin position and height and the system time it was last set
 	// return true if the origin is valid
 	bool getEkfGlobalOrigin(uint64_t &origin_time, double &latitude, double &longitude, float &origin_alt) const;
-	bool setEkfGlobalOrigin(const double latitude, const double longitude, const float altitude);
+	bool setEkfGlobalOrigin(double latitude, double longitude, float altitude, float eph = 0.f, float epv = 0.f);
 
 	// get the 1-sigma horizontal and vertical position uncertainty of the ekf WGS-84 position
 	void get_ekf_gpos_accuracy(float *ekf_eph, float *ekf_epv) const;
@@ -403,7 +407,7 @@ public:
 
 	float getYawVar() const;
 
-	uint8_t getHeightSensorRef() const { return _height_sensor_ref; }
+	HeightSensor getHeightSensorRef() const { return _height_sensor_ref; }
 
 #if defined(CONFIG_EKF2_AIRSPEED)
 	const auto &aid_src_airspeed() const { return _aid_src_airspeed; }
@@ -427,8 +431,7 @@ public:
 #endif // CONFIG_EKF2_EXTERNAL_VISION
 
 #if defined(CONFIG_EKF2_GNSS)
-	// ask estimator for sensor data collection decision and do any preprocessing if required, returns true if not defined
-	bool collect_gps(const gpsMessage &gps) override;
+	void collect_gps(const gnssSample &gps);
 
 	// set minimum continuous period without GPS fail required to mark a healthy GPS status
 	void set_min_required_gps_health_time(uint32_t time_us) { _min_gps_health_time_us = time_us; }
@@ -467,7 +470,6 @@ public:
 	const auto &aid_src_aux_vel() const { return _aid_src_aux_vel; }
 #endif // CONFIG_EKF2_AUXVEL
 
-
 	bool measurementUpdate(VectorState &K, float innovation_variance, float innovation)
 	{
 		clearInhibitedStateKalmanGains(K);
@@ -497,6 +499,10 @@ public:
 
 		return is_healthy;
 	}
+
+	void updateParameters();
+
+	friend class AuxGlobalPosition;
 
 private:
 
@@ -629,7 +635,6 @@ private:
 #endif // CONFIG_EKF2_EXTERNAL_VISION
 
 #if defined(CONFIG_EKF2_GNSS)
-	// booleans true when fresh sensor data is available at the fusion time horizon
 	bool _gps_data_ready{false};	///< true when new GPS data has fallen behind the fusion time horizon and is available to be fused
 
 	// variables used for the GPS quality checks
@@ -982,29 +987,38 @@ private:
 	// control fusion of GPS observations
 	void controlGpsFusion(const imuSample &imu_delayed);
 	void stopGpsFusion();
-
+	void updateGnssVel(const gnssSample &gnss_sample, estimator_aid_source3d_s &aid_src);
+	void updateGnssPos(const gnssSample &gnss_sample, estimator_aid_source2d_s &aid_src);
+	void controlGnssYawEstimator(estimator_aid_source3d_s &aid_src_vel);
+	bool tryYawEmergencyReset();
+	void resetVelocityToGnss(estimator_aid_source3d_s &aid_src);
+	void resetHorizontalPositionToGnss(estimator_aid_source2d_s &aid_src);
 	bool shouldResetGpsFusion() const;
 
-	// return true id the GPS quality is good enough to set an origin and start aiding
-	bool gps_is_good(const gpsMessage &gps);
+	/*
+	 * Return true if the GPS solution quality is adequate.
+	 * Checks are activated using the EKF2_GPS_CHECK bitmask parameter
+	 * Checks are adjusted using the EKF2_REQ_* parameters
+	*/
+	bool runGnssChecks(const gnssSample &gps);
 
-	void controlGnssHeightFusion(const gpsSample &gps_sample);
+	void controlGnssHeightFusion(const gnssSample &gps_sample);
 	void stopGpsHgtFusion();
 
 	void resetGpsDriftCheckFilters();
 
 # if defined(CONFIG_EKF2_GNSS_YAW)
-	void controlGpsYawFusion(const gpsSample &gps_sample, bool gps_checks_passing, bool gps_checks_failing);
+	void controlGpsYawFusion(const gnssSample &gps_sample);
 	void stopGpsYawFusion();
 
 	// fuse the yaw angle obtained from a dual antenna GPS unit
-	void fuseGpsYaw();
+	void fuseGpsYaw(float antenna_yaw_offset);
 
 	// reset the quaternions states using the yaw angle obtained from a dual antenna GPS unit
 	// return true if the reset was successful
-	bool resetYawToGps(const float gnss_yaw);
+	bool resetYawToGps(float gnss_yaw, float gnss_yaw_offset);
 
-	void updateGpsYaw(const gpsSample &gps_sample);
+	void updateGpsYaw(const gnssSample &gps_sample);
 
 # endif // CONFIG_EKF2_GNSS_YAW
 
@@ -1132,12 +1146,12 @@ private:
 	// yaw_variance : yaw error variance (rad^2)
 	void resetQuatStateYaw(float yaw, float yaw_variance);
 
-	uint8_t _height_sensor_ref{HeightSensor::UNKNOWN};
-	uint8_t _position_sensor_ref{static_cast<uint8_t>(PositionSensor::GNSS)};
+	HeightSensor _height_sensor_ref{HeightSensor::UNKNOWN};
+	PositionSensor _position_sensor_ref{PositionSensor::GNSS};
 
 #if defined(CONFIG_EKF2_EXTERNAL_VISION)
 	HeightBiasEstimator _ev_hgt_b_est{HeightSensor::EV, _height_sensor_ref};
-	PositionBiasEstimator _ev_pos_b_est{static_cast<uint8_t>(PositionSensor::EV), _position_sensor_ref};
+	PositionBiasEstimator _ev_pos_b_est{PositionSensor::EV, _position_sensor_ref};
 	AlphaFilter<Quatf> _ev_q_error_filt{0.001f};
 	bool _ev_q_error_initialized{false};
 #endif // CONFIG_EKF2_EXTERNAL_VISION
@@ -1228,6 +1242,10 @@ private:
 
 	ZeroGyroUpdate _zero_gyro_update{};
 	ZeroVelocityUpdate _zero_velocity_update{};
+
+#if defined(CONFIG_EKF2_AUX_GLOBAL_POSITION) && defined(MODULE_NAME)
+	AuxGlobalPosition _aux_global_position{};
+#endif // CONFIG_EKF2_AUX_GLOBAL_POSITION
 };
 
 #endif // !EKF_EKF_H
